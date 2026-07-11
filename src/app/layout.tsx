@@ -1,0 +1,33 @@
+import type { Metadata } from "next";
+import "./globals.css";
+import Navbar from "@/components/Navbar";
+
+export const metadata: Metadata = {
+  title: "SnapMap — Location Memory Management",
+  description: "Create, share, and explore geotagged memories with photos, videos, categories, and more.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <head>
+        <link
+          rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossOrigin=""
+        />
+      </head>
+      <body>
+        <Navbar />
+        <main className="page-container">
+          {children}
+        </main>
+      </body>
+    </html>
+  );
+}
