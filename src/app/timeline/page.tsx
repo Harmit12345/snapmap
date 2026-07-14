@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { format, isToday, isYesterday, startOfDay } from 'date-fns';
 import type { Memory } from '@/lib/types';
 import MemoryCard from '@/components/MemoryCard';
@@ -25,7 +26,10 @@ function groupByDay(memories: Memory[]): Map<string, Memory[]> {
   return groups;
 }
 
-export default function TimelinePage() {
+function TimelinePageContent() {
+  const searchParams = useSearchParams();
+  const search = searchParams.get('search');
+
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -49,6 +53,7 @@ export default function TimelinePage() {
       params.set('limit', '20');
       if (!reset && cursor) params.set('cursor', cursor);
       if (categoryFilter) params.set('category', categoryFilter);
+      if (search) params.set('search', search);
 
       const res = await fetch(`/api/users/me/timeline?${params}`);
       const data = await res.json();
@@ -66,14 +71,14 @@ export default function TimelinePage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [cursor, categoryFilter]);
+  }, [cursor, categoryFilter, search]);
 
-  // Initial load & category change
+  // Initial load & category/search change
   useEffect(() => {
     setCursor(null);
     fetchTimeline(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryFilter]);
+  }, [categoryFilter, search]);
 
   // Infinite scroll
   useEffect(() => {
@@ -101,6 +106,10 @@ export default function TimelinePage() {
 
   const handleUpdate = (updated: Memory) => {
     setMemories(prev => prev.map(m => m.id === updated.id ? updated : m));
+  };
+
+  const handleDelete = (deletedId: string) => {
+    setMemories(prev => prev.filter(m => m.id !== deletedId));
   };
 
   const groups = groupByDay(memories);
@@ -159,6 +168,7 @@ export default function TimelinePage() {
                     memory={memory}
                     index={idx}
                     onUpdate={handleUpdate}
+                    onDelete={handleDelete}
                   />
                 ))}
               </div>
@@ -192,5 +202,22 @@ export default function TimelinePage() {
         />
       )}
     </div>
+  );
+}
+
+export default function TimelinePage() {
+  return (
+    <Suspense fallback={
+      <div style={{ padding: '80px 24px', textAlign: 'center' }}>
+        <div className="loading-container" style={{ margin: '0 auto' }}>
+          <div className="loading-dots">
+            <span /><span /><span />
+          </div>
+          <span style={{ color: 'var(--text-muted)' }}>Loading timeline...</span>
+        </div>
+      </div>
+    }>
+      <TimelinePageContent />
+    </Suspense>
   );
 }

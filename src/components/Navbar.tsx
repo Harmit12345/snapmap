@@ -2,21 +2,30 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Suspense } from 'react';
+import { Map, LayoutList, Bookmark, MapPin } from 'lucide-react';
+import SearchBar from './SearchBar';
 
 export default function Navbar() {
   const pathname = usePathname();
 
   const links = [
-    { href: '/', label: 'Map', icon: '🗺️' },
-    { href: '/timeline', label: 'Timeline', icon: '📱' },
-    { href: '/favorites', label: 'Saved', icon: '🔖' },
+    { href: '/', label: 'Map', icon: <Map size={18} strokeWidth={1.5} /> },
+    { href: '/timeline', label: 'Timeline', icon: <LayoutList size={18} strokeWidth={1.5} /> },
+    { href: '/favorites', label: 'Saved', icon: <Bookmark size={18} strokeWidth={1.5} /> },
   ];
 
   return (
     <nav className="navbar">
       <Link href="/" className="nav-logo">
-        📍 SnapMap
+        <MapPin size={22} color="var(--accent-primary)" strokeWidth={2} />
+        <span>SnapMap</span>
       </Link>
+      
+      <Suspense fallback={<div style={{ flex: 1, maxWidth: '300px' }} />}>
+        <SearchBar />
+      </Suspense>
+
       <div className="nav-links">
         {links.map((link) => (
           <Link

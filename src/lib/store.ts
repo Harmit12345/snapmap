@@ -65,6 +65,7 @@ interface StoredMemory {
   commentCount: number;
   favoriteCount: number;
   mediaCount: number;
+  hashtags?: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -114,14 +115,30 @@ interface StoredFavorite {
 }
 
 // ---- Storage maps ----
-const memories: Map<string, StoredMemory> = new Map();
-const mediaItems: Map<string, StoredMedia> = new Map();
-const memoryCategories: StoredMemoryCategory[] = [];
-const likes: StoredLike[] = [];
-const favorites: StoredFavorite[] = [];
+const globalForStore = globalThis as unknown as {
+  memories: Map<string, StoredMemory>;
+  mediaItems: Map<string, StoredMedia>;
+  memoryCategories: StoredMemoryCategory[];
+  likes: StoredLike[];
+  favorites: StoredFavorite[];
+  uploadBuffers: Map<string, string>;
+};
 
-// Buffer for uploaded files (mediaId → base64 dataUrl)
-const uploadBuffers: Map<string, string> = new Map();
+const memories: Map<string, StoredMemory> = globalForStore.memories || new Map();
+const mediaItems: Map<string, StoredMedia> = globalForStore.mediaItems || new Map();
+const memoryCategories: StoredMemoryCategory[] = globalForStore.memoryCategories || [];
+const likes: StoredLike[] = globalForStore.likes || [];
+const favorites: StoredFavorite[] = globalForStore.favorites || [];
+const uploadBuffers: Map<string, string> = globalForStore.uploadBuffers || new Map();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForStore.memories = memories;
+  globalForStore.mediaItems = mediaItems;
+  globalForStore.memoryCategories = memoryCategories;
+  globalForStore.likes = likes;
+  globalForStore.favorites = favorites;
+  globalForStore.uploadBuffers = uploadBuffers;
+}
 
 // ---- Seed data ----
 
@@ -323,6 +340,7 @@ export function buildMemoryResponse(stored: StoredMemory, requesterId?: string):
     mediaCount: stored.mediaCount,
     media: getMediaForMemory(stored.id),
     categories: getMemoryCategories(stored.id),
+    hashtags: stored.hashtags || [],
     isFavorited: favorites.some(f => f.memoryId === stored.id && f.userId === uid),
     isLiked: likes.some(l => l.memoryId === stored.id && l.userId === uid),
     createdAt: stored.createdAt,
@@ -343,6 +361,7 @@ export function createMemory(data: {
   memoryDate?: string;
   categoryIds?: string[];
   primaryCategoryId?: string;
+  hashtags?: string[];
 }): Memory {
   const id = genId();
   const now = new Date().toISOString();
@@ -363,6 +382,7 @@ export function createMemory(data: {
     commentCount: 0,
     favoriteCount: 0,
     mediaCount: 0,
+    hashtags: data.hashtags || [],
     createdAt: now,
     updatedAt: now,
     deletedAt: null,

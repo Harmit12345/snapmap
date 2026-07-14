@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createMemory } from '@/lib/store';
+import { getDb, genId } from '@/lib/db';
+import { getFullMemory, DEMO_USER_ID } from '@/lib/db-helpers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +22,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate body length
     if (body.body && body.body.length > 5000) {
       return NextResponse.json(
         { error: { code: 'BODY_TOO_LONG', message: 'body exceeds 5000 characters', details: {} } },
@@ -29,21 +29,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const memory = createMemory({
-      title: body.title,
-      body: body.body,
-      lat: body.location.lat,
-      lng: body.location.lng,
-      locationName: body.locationName,
-      address: body.address,
-      visibility: body.visibility,
-      memoryDate: body.memoryDate,
-      categoryIds: body.categoryIds,
-      primaryCategoryId: body.primaryCategoryId,
-    });
+    const db = await getDb();
+
+    let embeddedCategories: any[] = [];
+    if (body.categoryIds && body.categoryIds.length > 0) {
+      const cats = await db.collection<any>('categories').find({ id: { $in: body.categoryIds } }).toArray();
+      embeddedCategories = cats.map(c => ({
+        id: c.id,
+        slug: c.slug,
+        displayName: c.displayName,
+        icon: c.icon,
+        color: c.color,
+        isPrimary: c.id === body.primaryCategoryId,
+        source: 'user',
+        confidence: null
+      }));
+    }
+
+    const memoryId = genId();
+
+    const newMemory = {
+      _id: memoryId,
+      userId: DEMO_USER_ID,
+      title: body.title || null,
+      body: body.body || null,
+      location: {
+        type: 'Point',
+        coordinates: [body.location.lng, body.location.lat]
+      },
+      locationName: body.locationName || null,
+      address: body.address || null,
+      visibility: body.visibility || 'public',
+      status: 'published',
+      memoryDate: body.memoryDate ? new Date(body.memoryDate) : new Date(),
+      likeCount: 0,
+      commentCount: 0,
+      favoriteCount: 0,
+      mediaCount: 0,
+      media: [],
+      categories: embeddedCategories,
+      hashtags: body.hashtags || [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    await db.collection<any>('memories').insertOne(newMemory);
+
+    const memory = await getFullMemory(memoryId);
 
     return NextResponse.json({ data: memory }, { status: 201 });
-  } catch {
+  } catch (err) {
+    console.error(err);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: 'Failed to create memory', details: {} } },
       { status: 500 }

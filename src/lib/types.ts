@@ -78,6 +78,7 @@ export interface Memory {
   mediaCount: number;
   media: MediaObject[];
   categories: MemoryCategory[];
+  hashtags?: string[];
   isFavorited: boolean;
   isLiked: boolean;
   createdAt: string;
@@ -122,6 +123,7 @@ export interface CreateMemoryRequest {
   memoryDate?: string;
   categoryIds?: string[];
   primaryCategoryId?: string;
+  hashtags?: string[];
 }
 
 // ---- Presign Request ----

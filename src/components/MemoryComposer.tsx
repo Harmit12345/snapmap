@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Category, Memory } from '@/lib/types';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Globe, Users, Lock, MapPin, Camera, X, Check, Star, Film, Pencil, Tags, Loader2, Sparkles, Navigation } from 'lucide-react';
+import type { Memory, Category } from '@/lib/types';
 
 interface MemoryComposerProps {
   onClose: () => void;
@@ -22,6 +23,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
   const [step, setStep] = useState(1);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [hashtags, setHashtags] = useState('');
   const [locationName, setLocationName] = useState('');
   const [address, setAddress] = useState('');
   const [lat, setLat] = useState(defaultLat);
@@ -33,6 +35,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
   const [primaryCategoryId, setPrimaryCategoryId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [fetchingLocation, setFetchingLocation] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -43,17 +46,69 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
   }, []);
 
   // Try to get user's location
-  useEffect(() => {
-    if (navigator.geolocation) {
+  const fetchLocation = useCallback(() => {
+    setFetchingLocation(true);
+    const fetchAddress = async (latitude: number, longitude: number) => {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1&email=test@example.com`);
+        const data = await res.json();
+        if (data && data.address) {
+          const exactName = data.address.amenity || data.address.road || data.address.neighbourhood || data.address.suburb || data.address.city || data.address.town || data.address.village;
+          if (exactName) {
+            setLocationName(exactName);
+          } else if (data.display_name) {
+            setLocationName(data.display_name.split(',')[0]);
+          }
+          if (data.display_name) setAddress(data.display_name);
+        }
+      } catch (e) {
+        console.error('Reverse geocoding failed', e);
+      } finally {
+        setFetchingLocation(false);
+      }
+    };
+
+    const handleLocation = (latitude: number, longitude: number) => {
+      setLat(latitude);
+      setLng(longitude);
+      fetchAddress(latitude, longitude);
+    };
+
+    const fallbackFetch = async () => {
+      try {
+        const res = await fetch('https://freeipapi.com/api/json');
+        const data = await res.json();
+        if (data.latitude && data.longitude) {
+           return handleLocation(data.latitude, data.longitude);
+        }
+      } catch(e) {}
+
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        const data = await res.json();
+        if (data.latitude && data.longitude) {
+           return handleLocation(data.latitude, data.longitude);
+        }
+      } catch (e) {}
+
+      setFetchingLocation(false);
+      fetchAddress(defaultLat, defaultLng);
+    };
+
+    if (navigator.geolocation && (window.location.protocol === 'https:' || window.location.hostname === 'localhost')) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLat(pos.coords.latitude);
-          setLng(pos.coords.longitude);
-        },
-        () => {} // silently fail
+        (pos) => handleLocation(pos.coords.latitude, pos.coords.longitude),
+        fallbackFetch,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
       );
+    } else {
+      fallbackFetch();
     }
-  }, []);
+  }, [defaultLat, defaultLng]);
+
+  useEffect(() => {
+    fetchLocation();
+  }, [fetchLocation]);
 
   const handleFileSelect = useCallback((selectedFiles: FileList | null) => {
     if (!selectedFiles) return;
@@ -116,19 +171,29 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
         setFiles([...updatedFiles]);
 
         // Step 2: Upload file
-        const formData = new FormData();
-        formData.append('file', uf.file);
-        await fetch(presignData.data.uploadUrl, {
-          method: 'POST',
-          body: formData,
+        const uploadRes = await fetch(presignData.data.uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': uf.file.type,
+          },
+          body: uf.file,
         });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Upload failed: ${uploadRes.statusText}`);
+        }
+
         uf.progress = 70;
         setFiles([...updatedFiles]);
 
         // Step 3: Confirm
-        await fetch(`/api/memories/${memoryId}/media/${uf.mediaId}/confirm`, {
+        const confirmRes = await fetch(`/api/memories/${memoryId}/media/${uf.mediaId}/confirm`, {
           method: 'POST',
         });
+        
+        if (!confirmRes.ok) {
+          throw new Error('Confirm failed');
+        }
         uf.status = 'processing';
         uf.progress = 85;
         setFiles([...updatedFiles]);
@@ -150,6 +215,11 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
 
     try {
       // Create the memory
+      const parsedHashtags = hashtags
+        .split(',')
+        .map(t => t.trim().replace(/^#/, ''))
+        .filter(Boolean);
+
       const res = await fetch('/api/memories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -162,8 +232,13 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
           visibility,
           categoryIds: selectedCategoryIds.length > 0 ? selectedCategoryIds : undefined,
           primaryCategoryId: primaryCategoryId || undefined,
+          hashtags: parsedHashtags.length > 0 ? parsedHashtags : undefined,
         }),
       });
+
+      if (!res.ok) {
+        throw new Error('Failed to create memory');
+      }
 
       const data = await res.json();
       const memory = data.data;
@@ -196,8 +271,8 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
       <div className="modal-content" style={{ maxWidth: '560px' }}>
         {/* Header */}
         <div className="composer-header">
-          <h3 className="composer-title">
-            {step === 1 ? '📝 Create Memory' : step === 2 ? '📸 Add Media' : '🏷️ Categories'}
+          <h3 className="composer-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {step === 1 ? <><Pencil size={20} strokeWidth={1.5} /> Create Memory</> : step === 2 ? <><Camera size={20} strokeWidth={1.5} /> Add Media</> : <><Tags size={20} strokeWidth={1.5} /> Categories</>}
           </h3>
           <div className="composer-step-indicator">
             {[1, 2, 3].map(s => (
@@ -244,55 +319,40 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                    📍 Place Name
-                  </label>
-                  <input
-                    className="input"
-                    placeholder="e.g. Fuunji Ramen"
-                    value={locationName}
-                    onChange={e => setLocationName(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                    Address
-                  </label>
-                  <input
-                    className="input"
-                    placeholder="Street address..."
-                    value={address}
-                    onChange={e => setAddress(e.target.value)}
-                  />
-                </div>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Hashtags
+                </label>
+                <input
+                  className="input"
+                  placeholder="e.g. food, tokyo, trip (comma separated)"
+                  value={hashtags}
+                  onChange={e => setHashtags(e.target.value)}
+                />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                    Latitude
-                  </label>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Location
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     className="input"
-                    type="number"
-                    step="0.0001"
-                    value={lat}
-                    onChange={e => setLat(parseFloat(e.target.value) || 0)}
+                    placeholder={fetchingLocation ? "Locating..." : "Location will appear here"}
+                    value={locationName}
+                    readOnly
+                    style={{ flex: 1, cursor: 'default', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
                   />
-                </div>
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                    Longitude
-                  </label>
-                  <input
-                    className="input"
-                    type="number"
-                    step="0.0001"
-                    value={lng}
-                    onChange={e => setLng(parseFloat(e.target.value) || 0)}
-                  />
+                  <button 
+                    onClick={fetchLocation} 
+                    className="btn btn-secondary" 
+                    disabled={fetchingLocation}
+                    style={{ padding: '0 16px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    title="Fetch current location"
+                  >
+                    {fetchingLocation ? <Loader2 size={16} className="lucide-spin" strokeWidth={1.5} /> : <Navigation size={16} strokeWidth={1.5} />}
+                    {fetchingLocation ? 'Locating...' : 'Locate Me'}
+                  </button>
                 </div>
               </div>
 
@@ -305,10 +365,11 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                     <button
                       key={v}
                       className={`chip ${visibility === v ? 'chip-active' : 'chip-default'}`}
-                      style={visibility === v ? { background: 'var(--accent-primary)' } : {}}
+                      style={{ ...(visibility === v ? { background: 'var(--accent-primary)' } : {}), display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       onClick={() => setVisibility(v)}
                     >
-                      {v === 'public' ? '🌍' : v === 'friends' ? '👥' : '🔒'} {v}
+                      {v === 'public' ? <Globe size={14} strokeWidth={1.5} /> : v === 'friends' ? <Users size={14} strokeWidth={1.5} /> : <Lock size={14} strokeWidth={1.5} />} 
+                      <span style={{ textTransform: 'capitalize' }}>{v}</span>
                     </button>
                   ))}
                 </div>
@@ -330,7 +391,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                   handleFileSelect(e.dataTransfer.files);
                 }}
               >
-                <div className="upload-zone-icon">📸</div>
+                <div className="upload-zone-icon" style={{ color: 'var(--text-muted)' }}><Camera size={48} strokeWidth={1.5} /></div>
                 <p className="upload-zone-text">
                   <strong>Click to upload</strong> or drag and drop
                 </p>
@@ -355,8 +416,8 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                   {files.map((uf, idx) => (
                     <div key={idx} className="upload-item">
                       {uf.file.type.startsWith('video/') ? (
-                        <div className="upload-item-preview" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
-                          🎬
+                        <div className="upload-item-preview" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                          <Film size={24} strokeWidth={1.5} />
                         </div>
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -379,11 +440,11 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                           onClick={() => removeFile(idx)}
                           style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '4px' }}
                         >
-                          ✕
+                          <X size={16} strokeWidth={1.5} />
                         </button>
                       )}
                       {uf.status === 'ready' && (
-                        <span style={{ color: 'var(--success)', fontSize: '18px' }}>✓</span>
+                        <span style={{ color: 'var(--success)' }}><Check size={18} strokeWidth={1.5} /></span>
                       )}
                     </div>
                   ))}
@@ -476,15 +537,16 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
               className="btn btn-primary"
               onClick={handleCreate}
               disabled={creating}
-              style={creating ? { opacity: 0.7 } : {}}
-            >
+              >
               {creating ? (
                 <>
-                  <div className="processing-spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }} />
+                  <Loader2 size={16} className="lucide-spin" strokeWidth={1.5} />
                   Creating...
                 </>
               ) : (
-                '✨ Create Memory'
+                <>
+                  <Sparkles size={16} strokeWidth={1.5} /> Create Memory
+                </>
               )}
             </button>
           )}
