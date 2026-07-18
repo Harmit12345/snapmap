@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Suspense } from 'react';
 import { Map, LayoutList, Bookmark, MapPin } from 'lucide-react';
 import SearchBar from './SearchBar';
+import NotificationBell from './NotificationBell';
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -37,6 +38,9 @@ export default function Navbar() {
             <span>{link.label}</span>
           </Link>
         ))}
+        
+        {/* In-App Notification Bell */}
+        <NotificationBell />
       </div>
     </nav>
   );

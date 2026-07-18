@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getFullMemory, DEMO_USER_ID } from '@/lib/db-helpers';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const cursorStr = request.nextUrl.searchParams.get('cursor');
@@ -9,6 +11,11 @@ export async function GET(request: NextRequest) {
     const category = request.nextUrl.searchParams.get('category');
     const status = request.nextUrl.searchParams.get('status');
     const search = request.nextUrl.searchParams.get('search');
+    
+    // Map & Discovery parameters
+    const lat = request.nextUrl.searchParams.get('lat');
+    const lng = request.nextUrl.searchParams.get('lng');
+    const radius = request.nextUrl.searchParams.get('radius'); // in meters, default 5000
 
     let cursorDate: Date | null = null;
     let cursorId: string | null = null;
@@ -23,12 +30,29 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const query: any = { userId: DEMO_USER_ID };
+    const query: any = {};
     
-    if (status) {
-      query.status = status;
+    if (lat && lng) {
+      // Discover nearby: global public memories
+      query.visibility = 'public';
+      query.status = status || 'published';
+      query.location = {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [parseFloat(lng), parseFloat(lat)]
+          },
+          $maxDistance: radius ? parseInt(radius, 10) : 5000
+        }
+      };
     } else {
-      query.status = { $ne: 'deleted' };
+      // Personal timeline
+      query.userId = DEMO_USER_ID;
+      if (status) {
+        query.status = status;
+      } else {
+        query.status = { $ne: 'deleted' };
+      }
     }
 
     if (category) {
@@ -37,39 +61,52 @@ export async function GET(request: NextRequest) {
 
     const baseAndClauses: any[] = [];
     if (search) {
-      const regex = new RegExp(search, 'i');
+      // Escape special regex characters to prevent ReDoS and injection
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
       baseAndClauses.push({
         $or: [
           { title: regex },
           { body: regex },
           { locationName: regex },
           { address: regex },
+          { city: regex },
           { hashtags: regex }
         ]
       });
     }
 
     const currentQuery = { ...query };
-    if (cursorDate && cursorId) {
-      currentQuery.$and = [
-        ...baseAndClauses,
-        {
-          $or: [
-            { createdAt: { $lt: cursorDate } },
-            { createdAt: cursorDate, _id: { $lt: cursorId } }
-          ]
-        }
-      ];
+    
+    // Note: $near sorting overrides other sorts natively. We'll rely on it if using $near
+    // We shouldn't use cursor with $near in MongoDB because $near inherently sorts by distance.
+    if (!lat || !lng) {
+      if (cursorDate && cursorId) {
+        currentQuery.$and = [
+          ...baseAndClauses,
+          {
+            $or: [
+              { createdAt: { $lt: cursorDate } },
+              { createdAt: cursorDate, _id: { $lt: cursorId } }
+            ]
+          }
+        ];
+      } else if (baseAndClauses.length > 0) {
+        currentQuery.$and = baseAndClauses;
+      }
     } else if (baseAndClauses.length > 0) {
-      currentQuery.$and = baseAndClauses;
+        currentQuery.$and = baseAndClauses;
     }
 
     const db = await getDb();
-    const memoriesRows = await db.collection<any>('memories')
-      .find(currentQuery)
-      .sort({ createdAt: -1, _id: -1 })
-      .limit(limit)
-      .toArray();
+    
+    const findCursor = db.collection<any>('memories').find(currentQuery);
+    
+    if (!lat || !lng) {
+      findCursor.sort({ createdAt: -1, _id: -1 });
+    }
+    
+    const memoriesRows = await findCursor.limit(limit).toArray();
 
     const memories = [];
     for (const row of memoriesRows) {
@@ -80,7 +117,9 @@ export async function GET(request: NextRequest) {
     let nextCursor = null;
     let hasMore = false;
 
-    if (memories.length > 0) {
+    // Pagination for $near can be complex, often involves skipping or dist offsets. 
+    // For MVP, we'll implement simple skip or no pagination for near queries, or standard cursor for timeline
+    if (memories.length > 0 && (!lat || !lng)) {
       const last = memoriesRows[memoriesRows.length - 1];
       
       const moreQuery = { ...query };
@@ -95,7 +134,6 @@ export async function GET(request: NextRequest) {
       ];
       
       const moreCount = await db.collection<any>('memories').countDocuments(moreQuery, { limit: 1 });
-      
       hasMore = moreCount > 0;
       
       if (hasMore) {
