@@ -23,11 +23,18 @@ if (process.env.NODE_ENV === 'development') {
   mongoClient = new MongoClient(connectionString);
 }
 
-export const clientPromise = mongoClient.connect();
+let clientPromise: Promise<MongoClient> | null = null;
 
 export async function getDb(): Promise<Db> {
+  if (!clientPromise) {
+    clientPromise = mongoClient.connect().catch(err => {
+      clientPromise = null; // Reset so next try can attempt again
+      console.error('MongoDB connection failed:', err.message);
+      throw err;
+    });
+  }
+  
   const client = await clientPromise;
-  // Get database name from connection string or default to snapmap
   const dbName = new URL(connectionString).pathname.slice(1) || 'snapmap';
   return client.db(dbName);
 }

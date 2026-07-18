@@ -8,6 +8,7 @@ import MediaCarousel from './MediaCarousel';
 import LikeButton from './LikeButton';
 import FavoriteButton from './FavoriteButton';
 import MemoryEditModal from './MemoryEditModal';
+import LocationFollowButton from './LocationFollowButton';
 
 interface MemoryDetailModalProps {
   memories: Memory[];
@@ -47,7 +48,18 @@ export default function MemoryDetailModal({ memories, onClose, onUpdate, onDelet
         
         {/* Fixed Header with close button */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)', zIndex: 10 }}>
-           <h3 style={{ margin: 0, fontSize: '16px' }}>{memories.length > 1 ? `${memories.length} Memories at this Location` : 'Memory Details'}</h3>
+           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+             <h3 style={{ margin: 0, fontSize: '16px' }}>{memories.length > 1 ? `${memories.length} Memories at this Location` : 'Memory Details'}</h3>
+             {memories.length > 0 && memories[0].locationName && (
+               <LocationFollowButton 
+                 locationName={memories[0].locationName} 
+                 initialIsFollowed={memories[0].isLocationFollowed || false}
+                 onUpdate={(isFollowed) => {
+                   if (onUpdate) onUpdate({ ...memories[0], isLocationFollowed: isFollowed });
+                 }}
+               />
+             )}
+           </div>
            <button
             onClick={onClose}
             style={{
@@ -141,8 +153,15 @@ export default function MemoryDetailModal({ memories, onClose, onUpdate, onDelet
                 <div className="detail-location">
                   <MapPin size={18} color="var(--accent-secondary)" strokeWidth={1.5} />
                   <div>
-                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center' }}>
                       {memory.locationName || 'Pinned Location'}
+                      <LocationFollowButton 
+                        locationName={memory.locationName} 
+                        initialIsFollowed={memory.isLocationFollowed || false}
+                        onUpdate={(isFollowed) => {
+                          if (onUpdate) onUpdate({ ...memory, isLocationFollowed: isFollowed });
+                        }}
+                      />
                     </div>
                     {memory.address && (
                       <div style={{ fontSize: '12px', marginTop: '2px' }}>{memory.address}</div>

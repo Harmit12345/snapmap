@@ -7,9 +7,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Validate location
-    if (!body.location?.lat || !body.location?.lng) {
+    if (body.location?.lat == null || body.location?.lng == null ||
+        typeof body.location.lat !== 'number' || typeof body.location.lng !== 'number') {
       return NextResponse.json(
-        { error: { code: 'INVALID_LOCATION', message: 'lat and lng are required', details: {} } },
+        { error: { code: 'INVALID_LOCATION', message: 'lat and lng are required and must be numbers', details: {} } },
         { status: 400 }
       );
     }
@@ -59,6 +60,9 @@ export async function POST(request: NextRequest) {
       },
       locationName: body.locationName || null,
       address: body.address || null,
+      city: body.city || null,
+      state: body.state || null,
+      country: body.country || null,
       visibility: body.visibility || 'public',
       status: 'published',
       memoryDate: body.memoryDate ? new Date(body.memoryDate) : new Date(),
@@ -76,6 +80,13 @@ export async function POST(request: NextRequest) {
     await db.collection<any>('memories').insertOne(newMemory);
 
     const memory = await getFullMemory(memoryId);
+
+    if (memory) {
+      // Fire and forget push notifications to subscribers
+      import('@/lib/notifications').then(({ notifySubscribersOfNewMemory }) => {
+        notifySubscribersOfNewMemory(memory).catch(console.error);
+      });
+    }
 
     return NextResponse.json({ data: memory }, { status: 201 });
   } catch (err) {
