@@ -14,6 +14,8 @@ export async function getFullMemory(memoryId: string, requesterId: string = DEMO
   const isLikedDoc = await db.collection<any>('memory_likes').findOne({ memoryId, userId: requesterId });
   const isFavoritedDoc = await db.collection<any>('memory_favorites').findOne({ memoryId, userId: requesterId });
 
+  const isLocationFollowedDoc = mem.locationName ? await db.collection<any>('location_subscriptions').findOne({ locationName: mem.locationName, userId: requesterId }) : null;
+
   const bucketUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/memories`;
   
   const mappedMedia = (mem.media || []).map((m: any) => ({
@@ -46,8 +48,12 @@ export async function getFullMemory(memoryId: string, requesterId: string = DEMO
     media: mappedMedia,
     categories: mem.categories || [],
     hashtags: mem.hashtags || [],
+    city: mem.city || null,
+    state: mem.state || null,
+    country: mem.country || null,
     isFavorited: !!isFavoritedDoc,
     isLiked: !!isLikedDoc,
+    isLocationFollowed: !!isLocationFollowedDoc,
     createdAt: mem.createdAt instanceof Date ? mem.createdAt.toISOString() : mem.createdAt,
     updatedAt: mem.updatedAt instanceof Date ? mem.updatedAt.toISOString() : mem.updatedAt,
   };
