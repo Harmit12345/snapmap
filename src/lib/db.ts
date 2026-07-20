@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { MongoClient, Db } from 'mongodb';
 
 // 1. Supabase Client for Storage (Media Uploads)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://xyzcompany.supabase.co';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'dummy';
 
 export const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
