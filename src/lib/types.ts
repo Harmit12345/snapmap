@@ -79,8 +79,12 @@ export interface Memory {
   media: MediaObject[];
   categories: MemoryCategory[];
   hashtags?: string[];
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
   isFavorited: boolean;
   isLiked: boolean;
+  isLocationFollowed?: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,8 +1,25 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Globe, Users, Lock, MapPin, Camera, X, Check, Star, Film, Pencil, Tags, Loader2, Sparkles, Navigation } from 'lucide-react';
+import {
+  Globe, Users, Lock, Camera, X, Check, Film, Pencil,
+  Tags, Loader2, Sparkles, MapPin
+} from 'lucide-react';
 import type { Memory, Category } from '@/lib/types';
+import type { LocationHierarchy } from './LocationPickerMap';
+import dynamic from 'next/dynamic';
+
+const LocationPickerMap = dynamic(() => import('./LocationPickerMap'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-tertiary)' }}>
+      <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+        <Loader2 size={28} className="lucide-spin" strokeWidth={1.5} />
+        <div style={{ fontSize: '14px', marginTop: '10px' }}>Loading map…</div>
+      </div>
+    </div>
+  ),
+});
 
 interface MemoryComposerProps {
   onClose: () => void;
@@ -19,24 +36,40 @@ interface UploadFile {
   mediaId?: string;
 }
 
-export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.6762, defaultLng = 139.6503 }: MemoryComposerProps) {
+const STEP_LABELS = ['Media', 'Story', 'Location', 'Categories'];
+
+export default function MemoryComposer({
+  onClose, onCreated,
+  defaultLat = 20.5937, defaultLng = 78.9629,
+}: MemoryComposerProps) {
   const [step, setStep] = useState(1);
+
+  // Story
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [hashtags, setHashtags] = useState('');
-  const [locationName, setLocationName] = useState('');
-  const [address, setAddress] = useState('');
+  const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
+
+  // Location
   const [lat, setLat] = useState(defaultLat);
   const [lng, setLng] = useState(defaultLng);
-  const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
+  const [locationName, setLocationName] = useState('');
+  const [address, setAddress] = useState('');
+  const [locationPinned, setLocationPinned] = useState(false);
+  const [locationHierarchy, setLocationHierarchy] = useState<LocationHierarchy>({ city: null, state: null, country: null });
+
+  // Media
   const [files, setFiles] = useState<UploadFile[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Categories
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [primaryCategoryId, setPrimaryCategoryId] = useState<string | null>(null);
+
+  // Submit
   const [creating, setCreating] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [fetchingLocation, setFetchingLocation] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch('/api/categories')
@@ -44,71 +77,6 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
       .then(data => setCategories(data.data || []))
       .catch(() => {});
   }, []);
-
-  // Try to get user's location
-  const fetchLocation = useCallback(() => {
-    setFetchingLocation(true);
-    const fetchAddress = async (latitude: number, longitude: number) => {
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1&email=test@example.com`);
-        const data = await res.json();
-        if (data && data.address) {
-          const exactName = data.address.amenity || data.address.road || data.address.neighbourhood || data.address.suburb || data.address.city || data.address.town || data.address.village;
-          if (exactName) {
-            setLocationName(exactName);
-          } else if (data.display_name) {
-            setLocationName(data.display_name.split(',')[0]);
-          }
-          if (data.display_name) setAddress(data.display_name);
-        }
-      } catch (e) {
-        console.error('Reverse geocoding failed', e);
-      } finally {
-        setFetchingLocation(false);
-      }
-    };
-
-    const handleLocation = (latitude: number, longitude: number) => {
-      setLat(latitude);
-      setLng(longitude);
-      fetchAddress(latitude, longitude);
-    };
-
-    const fallbackFetch = async () => {
-      try {
-        const res = await fetch('https://freeipapi.com/api/json');
-        const data = await res.json();
-        if (data.latitude && data.longitude) {
-           return handleLocation(data.latitude, data.longitude);
-        }
-      } catch(e) {}
-
-      try {
-        const res = await fetch('https://ipapi.co/json/');
-        const data = await res.json();
-        if (data.latitude && data.longitude) {
-           return handleLocation(data.latitude, data.longitude);
-        }
-      } catch (e) {}
-
-      setFetchingLocation(false);
-      fetchAddress(defaultLat, defaultLng);
-    };
-
-    if (navigator.geolocation && (window.location.protocol === 'https:' || window.location.hostname === 'localhost')) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => handleLocation(pos.coords.latitude, pos.coords.longitude),
-        fallbackFetch,
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-      );
-    } else {
-      fallbackFetch();
-    }
-  }, [defaultLat, defaultLng]);
-
-  useEffect(() => {
-    fetchLocation();
-  }, [fetchLocation]);
 
   const handleFileSelect = useCallback((selectedFiles: FileList | null) => {
     if (!selectedFiles) return;
@@ -146,11 +114,9 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
 
   const uploadAllFiles = async (memoryId: string) => {
     const updatedFiles = [...files];
-
     for (let i = 0; i < updatedFiles.length; i++) {
       const uf = updatedFiles[i];
       try {
-        // Step 1: Presign
         uf.status = 'uploading';
         uf.progress = 20;
         setFiles([...updatedFiles]);
@@ -170,35 +136,23 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
         uf.progress = 40;
         setFiles([...updatedFiles]);
 
-        // Step 2: Upload file
         const uploadRes = await fetch(presignData.data.uploadUrl, {
           method: 'PUT',
-          headers: {
-            'Content-Type': uf.file.type,
-          },
+          headers: { 'Content-Type': uf.file.type },
           body: uf.file,
         });
-
-        if (!uploadRes.ok) {
-          throw new Error(`Upload failed: ${uploadRes.statusText}`);
-        }
+        if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
 
         uf.progress = 70;
         setFiles([...updatedFiles]);
 
-        // Step 3: Confirm
-        const confirmRes = await fetch(`/api/memories/${memoryId}/media/${uf.mediaId}/confirm`, {
-          method: 'POST',
-        });
-        
-        if (!confirmRes.ok) {
-          throw new Error('Confirm failed');
-        }
+        const confirmRes = await fetch(`/api/memories/${memoryId}/media/${uf.mediaId}/confirm`, { method: 'POST' });
+        if (!confirmRes.ok) throw new Error('Confirm failed');
+
         uf.status = 'processing';
         uf.progress = 85;
         setFiles([...updatedFiles]);
 
-        // Wait for processing (poll or just wait)
         await new Promise(resolve => setTimeout(resolve, 2500));
         uf.status = 'ready';
         uf.progress = 100;
@@ -212,9 +166,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
 
   const handleCreate = async () => {
     setCreating(true);
-
     try {
-      // Create the memory
       const parsedHashtags = hashtags
         .split(',')
         .map(t => t.trim().replace(/^#/, ''))
@@ -229,6 +181,9 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
           location: { lat, lng },
           locationName: locationName || undefined,
           address: address || undefined,
+          city: locationHierarchy.city || undefined,
+          state: locationHierarchy.state || undefined,
+          country: locationHierarchy.country || undefined,
           visibility,
           categoryIds: selectedCategoryIds.length > 0 ? selectedCategoryIds : undefined,
           primaryCategoryId: primaryCategoryId || undefined,
@@ -236,26 +191,19 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
         }),
       });
 
-      if (!res.ok) {
-        throw new Error('Failed to create memory');
-      }
-
+      if (!res.ok) throw new Error('Failed to create memory');
       const data = await res.json();
       const memory = data.data;
 
-      // Upload files if any
-      if (files.length > 0) {
-        await uploadAllFiles(memory.id);
-      }
+      if (files.length > 0) await uploadAllFiles(memory.id);
 
-      // Re-fetch to get updated media
       const finalRes = await fetch(`/api/memories/${memory.id}`);
       const finalData = await finalRes.json();
-
       onCreated(finalData.data);
       onClose();
-    } catch {
-      // handle error
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'An error occurred while posting the memory. Check the server logs.');
     } finally {
       setCreating(false);
     }
@@ -265,138 +213,81 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
     if (e.target === e.currentTarget && !creating) onClose();
   };
 
+  const stepIcons = [Camera, Pencil, MapPin, Tags];
+  const StepIcon = stepIcons[step - 1];
+
   return (
     <>
-      <div className="modal-backdrop" onClick={handleBackdropClick} />
-      <div className="modal-content" style={{ maxWidth: '560px' }}>
+      <div
+        className="modal-backdrop"
+        style={{ backdropFilter: 'none', background: 'rgba(0,0,0,0.6)' }}
+      />
+      <div
+        className="modal-content"
+        style={{
+          inset: 0,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          width: '100%',
+          maxWidth: '100%',
+          height: '100dvh',
+          maxHeight: '100dvh',
+          transform: 'none',
+          borderRadius: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+
         {/* Header */}
         <div className="composer-header">
           <h3 className="composer-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {step === 1 ? <><Pencil size={20} strokeWidth={1.5} /> Create Memory</> : step === 2 ? <><Camera size={20} strokeWidth={1.5} /> Add Media</> : <><Tags size={20} strokeWidth={1.5} /> Categories</>}
+            <StepIcon size={20} strokeWidth={1.5} />
+            {STEP_LABELS[step - 1]}
           </h3>
-          <div className="composer-step-indicator">
-            {[1, 2, 3].map(s => (
-              <div
-                key={s}
-                className={`step-dot ${s === step ? 'active' : ''} ${s < step ? 'completed' : ''}`}
-              />
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Step {step} of 4
+            </span>
+            <div className="composer-step-indicator">
+              {[1, 2, 3, 4].map(s => (
+                <div
+                  key={s}
+                  className={`step-dot ${s === step ? 'active' : ''} ${s < step ? 'completed' : ''}`}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Body */}
-        <div className="composer-body">
-          {/* Step 1: Text + Location */}
+        <div className={step === 3 ? 'composer-body-map' : 'composer-body'}>
+
+          {/* ─── Step 1: Media ─── */}
           {step === 1 && (
-            <div className="animate-fade-in">
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Title
-                </label>
-                <input
-                  className="input"
-                  placeholder="Give your memory a title..."
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  maxLength={200}
-                />
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Story
-                </label>
-                <textarea
-                  className="input"
-                  placeholder="Tell the story behind this memory..."
-                  value={body}
-                  onChange={e => setBody(e.target.value)}
-                  maxLength={5000}
-                  rows={4}
-                />
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right', marginTop: '4px' }}>
-                  {body.length}/5000
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Hashtags
-                </label>
-                <input
-                  className="input"
-                  placeholder="e.g. food, tokyo, trip (comma separated)"
-                  value={hashtags}
-                  onChange={e => setHashtags(e.target.value)}
-                />
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Location
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    className="input"
-                    placeholder={fetchingLocation ? "Locating..." : "Location will appear here"}
-                    value={locationName}
-                    readOnly
-                    style={{ flex: 1, cursor: 'default', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
-                  />
-                  <button 
-                    onClick={fetchLocation} 
-                    className="btn btn-secondary" 
-                    disabled={fetchingLocation}
-                    style={{ padding: '0 16px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                    title="Fetch current location"
-                  >
-                    {fetchingLocation ? <Loader2 size={16} className="lucide-spin" strokeWidth={1.5} /> : <Navigation size={16} strokeWidth={1.5} />}
-                    {fetchingLocation ? 'Locating...' : 'Locate Me'}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
-                  Visibility
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {(['public', 'friends', 'private'] as const).map(v => (
-                    <button
-                      key={v}
-                      className={`chip ${visibility === v ? 'chip-active' : 'chip-default'}`}
-                      style={{ ...(visibility === v ? { background: 'var(--accent-primary)' } : {}), display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                      onClick={() => setVisibility(v)}
-                    >
-                      {v === 'public' ? <Globe size={14} strokeWidth={1.5} /> : v === 'friends' ? <Users size={14} strokeWidth={1.5} /> : <Lock size={14} strokeWidth={1.5} />} 
-                      <span style={{ textTransform: 'capitalize' }}>{v}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Media */}
-          {step === 2 && (
-            <div className="animate-fade-in">
+            <div className="animate-fade-in composer-step-content">
               <div
                 className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
                 onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
+                onDrop={e => {
                   e.preventDefault();
                   setDragOver(false);
                   handleFileSelect(e.dataTransfer.files);
                 }}
               >
-                <div className="upload-zone-icon" style={{ color: 'var(--text-muted)' }}><Camera size={48} strokeWidth={1.5} /></div>
+                <div className="upload-zone-icon" style={{ color: 'var(--text-muted)' }}>
+                  <Camera size={48} strokeWidth={1.5} />
+                </div>
                 <p className="upload-zone-text">
                   <strong>Click to upload</strong> or drag and drop
                 </p>
                 <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
-                  Photos (up to 20MB) • Videos (up to 500MB) • Max 10 files
+                  Photos (up to 20MB) · Videos (up to 500MB) · Max 10 files
                 </p>
               </div>
               <input
@@ -404,7 +295,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                 type="file"
                 multiple
                 accept="image/*,video/*"
-                onChange={(e) => handleFileSelect(e.target.files)}
+                onChange={e => handleFileSelect(e.target.files)}
                 style={{ display: 'none' }}
               />
 
@@ -427,7 +318,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                         <div className="upload-item-name">{uf.file.name}</div>
                         <div className="upload-item-status">
                           {(uf.file.size / (1024 * 1024)).toFixed(1)} MB
-                          {uf.status !== 'waiting' && ` • ${uf.status}`}
+                          {uf.status !== 'waiting' && ` · ${uf.status}`}
                         </div>
                         {uf.status !== 'waiting' && uf.status !== 'ready' && (
                           <div className="upload-progress-bar">
@@ -436,10 +327,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                         )}
                       </div>
                       {uf.status === 'waiting' && (
-                        <button
-                          onClick={() => removeFile(idx)}
-                          style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '4px' }}
-                        >
+                        <button onClick={() => removeFile(idx)} style={{ fontSize: '16px', color: 'var(--text-muted)', padding: '4px' }}>
                           <X size={16} strokeWidth={1.5} />
                         </button>
                       )}
@@ -450,14 +338,107 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                   ))}
                 </div>
               )}
+
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '16px', textAlign: 'center' }}>
+                You can skip and post a text-only memory →
+              </p>
             </div>
           )}
 
-          {/* Step 3: Categories */}
+          {/* ─── Step 2: Story ─── */}
+          {step === 2 && (
+            <div className="animate-fade-in composer-step-content">
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Title
+                </label>
+                <input
+                  className="input"
+                  placeholder="Give your memory a title…"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  maxLength={200}
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Caption / Story
+                </label>
+                <textarea
+                  className="input"
+                  placeholder="Tell the story behind this memory…"
+                  value={body}
+                  onChange={e => setBody(e.target.value)}
+                  maxLength={5000}
+                  rows={4}
+                />
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right', marginTop: '4px' }}>
+                  {body.length}/5000
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Hashtags
+                </label>
+                <input
+                  className="input"
+                  placeholder="e.g. food, tokyo, trip (comma separated)"
+                  value={hashtags}
+                  onChange={e => setHashtags(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Visibility
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {(['public', 'friends', 'private'] as const).map(v => (
+                    <button
+                      key={v}
+                      className={`chip ${visibility === v ? 'chip-active' : 'chip-default'}`}
+                      style={{ ...(visibility === v ? { background: 'var(--accent-primary)' } : {}), display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      onClick={() => setVisibility(v)}
+                    >
+                      {v === 'public' ? <Globe size={14} strokeWidth={1.5} /> : v === 'friends' ? <Users size={14} strokeWidth={1.5} /> : <Lock size={14} strokeWidth={1.5} />}
+                      <span style={{ textTransform: 'capitalize' }}>{v}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Step 3: Location Picker ─── */}
           {step === 3 && (
-            <div className="animate-fade-in">
+            <div className="animate-fade-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', margin: '0 -24px -0px', padding: '0 24px' }}>
+              <LocationPickerMap
+                initialLat={lat}
+                initialLng={lng}
+                onLocationChange={(newLat, newLng, name, addr, hierarchy) => {
+                  setLat(newLat);
+                  setLng(newLng);
+                  setLocationName(name);
+                  setAddress(addr);
+                  setLocationHierarchy(hierarchy);
+                  setLocationPinned(true);
+                }}
+                locationPinned={locationPinned}
+                pinnedName={locationName}
+                pinnedAddress={address}
+                pinnedLat={lat}
+                pinnedLng={lng}
+              />
+            </div>
+          )}
+
+          {/* ─── Step 4: Categories ─── */}
+          {step === 4 && (
+            <div className="animate-fade-in composer-step-content">
               <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Select categories for your memory. Tap once to add, tap the ★ to make it the primary category (used for the map pin color).
+                Select categories for your memory. Tap once to add, tap ★ to make it primary (controls the map pin color).
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {categories.map(cat => {
@@ -475,12 +456,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                       {isSelected && (
                         <button
                           onClick={() => setPrimaryCategoryId(isPrimary ? null : cat.id)}
-                          style={{
-                            fontSize: '16px',
-                            color: isPrimary ? '#fbbf24' : 'var(--text-muted)',
-                            padding: '4px',
-                            transition: 'all var(--transition-fast)',
-                          }}
+                          style={{ fontSize: '16px', color: isPrimary ? '#fbbf24' : 'var(--text-muted)', padding: '4px', transition: 'all var(--transition-fast)' }}
                           title={isPrimary ? 'Remove primary' : 'Set as primary'}
                         >
                           {isPrimary ? '★' : '☆'}
@@ -492,14 +468,7 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
               </div>
 
               {selectedCategoryIds.length > 0 && (
-                <div style={{
-                  marginTop: '20px',
-                  padding: '12px 16px',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: 'var(--radius-md)',
-                  fontSize: '13px',
-                  color: 'var(--text-secondary)',
-                }}>
+                <div style={{ marginTop: '20px', padding: '12px 16px', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--text-secondary)' }}>
                   <strong>Selected:</strong>{' '}
                   {selectedCategoryIds.map(id => {
                     const cat = categories.find(c => c.id === id);
@@ -507,49 +476,47 @@ export default function MemoryComposer({ onClose, onCreated, defaultLat = 35.676
                   }).filter(Boolean).join(', ')}
                 </div>
               )}
+
+              {/* Location summary before submitting */}
+              {locationPinned && (
+                <div style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <MapPin size={16} strokeWidth={1.5} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                  <span>{locationName || address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`}</span>
+                </div>
+              )}
             </div>
           )}
+
         </div>
 
         {/* Footer */}
         <div className="composer-footer">
+          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: step === 3 ? '100%' : '600px', margin: '0 auto' }}>
           <button
             className="btn btn-ghost"
-            onClick={() => {
-              if (step > 1) setStep(step - 1);
-              else onClose();
-            }}
+            onClick={() => { if (step > 1) setStep(step - 1); else onClose(); }}
             disabled={creating}
+
           >
             {step > 1 ? '← Back' : 'Cancel'}
           </button>
 
-          {step < 3 ? (
-            <button
-              className="btn btn-primary"
-              onClick={() => setStep(step + 1)}
-              disabled={step === 1 && !lat && !lng}
-            >
+          {step < 4 ? (
+            <button className="btn btn-primary" onClick={() => setStep(step + 1)}>
               Next →
             </button>
           ) : (
-            <button
-              className="btn btn-primary"
-              onClick={handleCreate}
-              disabled={creating}
-              >
+            <button className="btn btn-primary" onClick={handleCreate} disabled={creating || !locationPinned}>
               {creating ? (
-                <>
-                  <Loader2 size={16} className="lucide-spin" strokeWidth={1.5} />
-                  Creating...
-                </>
+                <><Loader2 size={16} className="lucide-spin" strokeWidth={1.5} /> Creating…</>
+              ) : !locationPinned ? (
+                <>📍 Pin a location first</>
               ) : (
-                <>
-                  <Sparkles size={16} strokeWidth={1.5} /> Create Memory
-                </>
+                <><Sparkles size={16} strokeWidth={1.5} /> Post Memory</>
               )}
             </button>
           )}
+          </div>
         </div>
       </div>
     </>

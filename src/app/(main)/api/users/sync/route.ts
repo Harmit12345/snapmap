@@ -1,78 +1,106 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-
-function getUidFromToken(token: string) {
-  try {
-    const payload = token.split('.')[1];
-    const decoded = Buffer.from(payload, 'base64').toString('utf8');
-    const json = JSON.parse(decoded);
-    return json.user_id;
-  } catch (e) {
-    return null;
-  }
-}
+import { verifyFirebaseToken } from '@/lib/firebase-admin';
 
 export async function POST(request: Request) {
+  // 1. Verify the Firebase ID token cryptographically
+  let decoded;
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    decoded = await verifyFirebaseToken(request.headers.get('authorization'));
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
-    const token = authHeader.split('Bearer ')[1];
-    const tokenUid = getUidFromToken(token);
+  // 2. Parse request body
+  let body: {
+    uid?: string;
+    phoneNumber?: string;
+    email?: string;
+    isSignUp?: boolean;
+    username?: string;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
 
-    if (!tokenUid) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+  const { phoneNumber, isSignUp, username } = body;
 
-    const body = await request.json();
-    const { uid, phoneNumber, email, isSignUp, username } = body;
+  // 3. Always use the UID from the verified token — never trust the client-supplied uid
+  const uid = decoded.uid;
+  const email = decoded.email ?? body.email ?? null;
 
-    // Verify token matches requested UID
-    if (tokenUid !== uid) {
-      return NextResponse.json({ error: 'Unauthorized UID mismatch' }, { status: 401 });
-    }
-
+  try {
     const db = await getDb();
     const usersCollection = db.collection('users');
 
+    // 4. Look up existing profile
     const existingUser = await usersCollection.findOne({ firebaseUid: uid });
 
     if (existingUser) {
-      // Update existing user with new info if provided (like linking phone to email)
-      const updates: any = {};
-      if (phoneNumber && !existingUser.phoneNumber) updates.phoneNumber = phoneNumber;
+      // Update: link new identifiers if they aren't stored yet
+      const updates: Record<string, unknown> = {};
+      if (phoneNumber && !existingUser.phoneNumber)
+        updates.phoneNumber = phoneNumber;
       if (email && !existingUser.email) updates.email = email;
-      
+
       if (Object.keys(updates).length > 0) {
-        await usersCollection.updateOne({ _id: existingUser._id }, { $set: updates });
-        const safeProfile = { ...existingUser, ...updates, _id: existingUser._id.toString() };
-        return NextResponse.json({ success: true, profile: safeProfile });
+        await usersCollection.updateOne(
+          { _id: existingUser._id },
+          { $set: updates }
+        );
       }
-      const safeProfile = { ...existingUser, _id: existingUser._id.toString() };
+
+      const safeProfile = {
+        ...existingUser,
+        ...updates,
+        _id: existingUser._id.toString(),
+      };
       return NextResponse.json({ success: true, profile: safeProfile });
     }
 
-    // If no existing user, and they are trying to sign in, return error
+    // 5. No existing profile — block if this is a sign-in attempt (not sign-up)
     if (!isSignUp) {
-      return NextResponse.json({ error: 'No account found. Sign up first!' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'No account found. Please sign up first!' },
+        { status: 404 }
+      );
     }
 
-    // Create new user profile
-    const newUser: any = {
+    // 6. Create a new profile for sign-up
+    const defaultUsername =
+      username ||
+      (email
+        ? email.split('@')[0]
+        : phoneNumber
+        ? `user_${phoneNumber.slice(-4)}`
+        : `user_${uid.substring(0, 5)}`);
+
+    const newUser = {
       firebaseUid: uid,
-      email: email || null,
-      phoneNumber: phoneNumber || null,
-      username: username || (email ? email.split('@')[0] : 'user_' + uid.substring(0, 5)),
+      email: email ?? null,
+      phoneNumber: phoneNumber ?? null,
+      username: defaultUsername,
+      profile: {
+        displayName: username || defaultUsername,
+        bio: 'Hey there! I am using StoryShare.',
+        photoUrl: '',
+        privacySetting: 'public',
+      },
+      followersCount: 0,
+      followingCount: 0,
       createdAt: new Date(),
     };
 
-    await usersCollection.insertOne(newUser);
-    const safeNewProfile = { ...newUser, _id: newUser._id?.toString() };
+    const result = await usersCollection.insertOne(newUser);
+    const safeNewProfile = { ...newUser, _id: result.insertedId.toString() };
     return NextResponse.json({ success: true, profile: safeNewProfile });
   } catch (error) {
     console.error('Error syncing profile:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }

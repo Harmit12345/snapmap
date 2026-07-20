@@ -92,7 +92,12 @@ export default function MapView({ memories, onMemoryClick }: MapViewProps) {
   // Group memories by location
   const groupedMemories = new Map<string, Memory[]>();
   for (const memory of memories) {
-    const key = `${memory.location.lat.toFixed(6)},${memory.location.lng.toFixed(6)}`;
+    // Group memories by city if available, otherwise fallback to a broader ~1km grid
+    // This creates "Snapchat style" clusters where all memories in a city open together
+    const key = memory.city 
+      ? `city:${memory.city}` 
+      : `coord:${memory.location.lat.toFixed(2)},${memory.location.lng.toFixed(2)}`;
+      
     const existing = groupedMemories.get(key) || [];
     existing.push(memory);
     groupedMemories.set(key, existing);

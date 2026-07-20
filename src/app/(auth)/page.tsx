@@ -39,6 +39,12 @@ export default function LoginPage() {
   // Syncing state
   const [syncing, setSyncing] = useState(false);
 
+  // Name-collection step (replaces window.prompt)
+  const [showNameStep, setShowNameStep] = useState(false);
+  const [pendingFirebaseUser, setPendingFirebaseUser] = useState<any>(null);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+
   // Email form inputs
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -83,6 +89,31 @@ export default function LoginPage() {
     return data;
   }, [isSignUp, signUpPhone]);
 
+  const finishAuthWithName = useCallback(async (firebaseUser: any, fullName: string) => {
+    setSyncing(true);
+    setAuthError("");
+    try {
+      await syncUserToDatabase(firebaseUser, true, fullName);
+      router.push("/profile");
+    } catch (err: any) {
+      setAuthError(err.message || "Failed to sync user profile.");
+      await auth.signOut();
+      lastSyncedUid.current = null;
+    } finally {
+      setSyncing(false);
+      syncInProgress.current = false;
+      setShowNameStep(false);
+      setPendingFirebaseUser(null);
+    }
+  }, [syncUserToDatabase, router]);
+
+  const handleNameStepSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingFirebaseUser) return;
+    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim() || pendingFirebaseUser.displayName || "New User";
+    await finishAuthWithName(pendingFirebaseUser, fullName);
+  };
+
   const handleAuthSuccess = useCallback(async (firebaseUser: any) => {
     if (!firebaseUser) return;
     if (syncInProgress.current || lastSyncedUid.current === firebaseUser.uid) {
@@ -95,28 +126,25 @@ export default function LoginPage() {
     setAuthError("");
     try {
       if (isSignUp) {
-        const firstName = window.prompt("Enter your First Name to complete registration:");
-        if (firstName === null) throw new Error("Registration cancelled: Missing first name.");
-        const lastName = window.prompt("Enter your Last Name to complete registration:");
-        if (lastName === null) throw new Error("Registration cancelled: Missing last name.");
-        const fullName = `${firstName.trim()} ${lastName.trim()}`.trim() || firebaseUser.displayName || "New User";
-
-        await syncUserToDatabase(firebaseUser, true, fullName);
+        // Show inline name collection step instead of window.prompt
+        setSyncing(false);
+        setPendingFirebaseUser(firebaseUser);
+        setShowNameStep(true);
+        return; // finishAuthWithName will be called after form submit
       } else {
         try {
           await syncUserToDatabase(firebaseUser, false);
         } catch (err: any) {
           if (err.message.includes("No account found")) {
-            // User exists in Firebase but not in MongoDB! Let's gracefully create their profile now.
+            // User exists in Firebase but not in MongoDB — gracefully create their profile
             const fullName = firebaseUser.displayName || "New User";
             await syncUserToDatabase(firebaseUser, true, fullName);
           } else {
             throw err;
           }
         }
+        router.push("/profile");
       }
-
-      router.push("/");
     } catch (err: any) {
       const errMsg = err.message || "Failed to sync user profile.";
       setAuthError(errMsg);
@@ -350,13 +378,50 @@ export default function LoginPage() {
     setSignUpPhone("");
     setLinkingPhone(false);
     setLinkOtp("");
+    setFirstName("");
+    setLastName("");
+    setShowNameStep(false);
+    setPendingFirebaseUser(null);
   };
 
   return (
     <>
       <div id="recaptcha-container"></div>
       
-      {syncing ? (
+      {/* Inline name-collection step — shown after Firebase auth on sign-up */}
+      {showNameStep && pendingFirebaseUser && (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)", padding: "24px" }}>
+          <div className="glass-card" style={{ width: "100%", maxWidth: "440px", padding: "40px", display: "flex", flexDirection: "column", gap: "24px" }}>
+            <div>
+              <h2 style={{ fontSize: "28px", marginBottom: "8px", color: "var(--text-primary)" }}>One last step</h2>
+              <p style={{ color: "var(--text-secondary)", fontSize: "14px" }}>Enter your name to complete your profile.</p>
+            </div>
+            {authError && (
+              <div style={{ padding: "12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "var(--radius-md)", color: "var(--error)", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <AlertCircle size={16} /><span>{authError}</span>
+              </div>
+            )}
+            <form onSubmit={handleNameStepSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "6px", textTransform: "uppercase" }}>First Name</label>
+                <input type="text" className="input" placeholder="Alex" value={firstName} onChange={e => setFirstName(e.target.value)} required autoFocus />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "6px", textTransform: "uppercase" }}>Last Name</label>
+                <input type="text" className="input" placeholder="Explorer" value={lastName} onChange={e => setLastName(e.target.value)} />
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={syncing} style={{ width: "100%", marginTop: "8px", padding: "12px" }}>
+                {syncing ? "Setting up your profile..." : "Complete Registration"} <ArrowRight size={16} />
+              </button>
+              <button type="button" onClick={async () => { await auth.signOut(); lastSyncedUid.current = null; syncInProgress.current = false; resetFormState(); }} className="btn btn-ghost" style={{ width: "100%", border: "none" }}>
+                Cancel
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {syncing && !showNameStep ? (
         <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
           <div style={{ textAlign: "center" }}>
             <RefreshCw size={48} color="var(--accent-primary)" style={{ animation: "spin 2s linear infinite", margin: "0 auto 16px" }} />
@@ -364,7 +429,7 @@ export default function LoginPage() {
             <p style={{ color: "var(--text-secondary)", marginTop: "8px" }}>Personalizing database settings and verification gates for your dashboard.</p>
           </div>
         </div>
-      ) : (
+      ) : !showNameStep && (
         <div style={{ display: "flex", minHeight: "100vh", width: "100%", background: "var(--bg-primary)" }}>
           
           <div style={{ flex: "1 1 50%", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
