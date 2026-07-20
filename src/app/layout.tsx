@@ -23,10 +23,7 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <Navbar />
-        <main className="page-container">
-          {children}
-        </main>
+        {children}
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 import { getDb } from './db';
 import type { Memory } from './types';
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps, getApp, cert } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 
 // Initialize Firebase Admin lazily to prevent crashing if keys are missing
 function getFirebaseAdmin() {
@@ -8,9 +9,9 @@ function getFirebaseAdmin() {
     return null;
   }
   
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
         // Handle escaped newlines in the private key string
@@ -19,7 +20,7 @@ function getFirebaseAdmin() {
     });
   }
   
-  return admin;
+  return getMessaging(getApp());
 }
 
 // Helper to escape special regex characters in user input
@@ -136,11 +137,11 @@ export async function notifySubscribersOfNewMemory(memory: Memory) {
       tokens: pushTokens
     };
 
-    const firebaseAdmin = getFirebaseAdmin();
+    const firebaseMessaging = getFirebaseAdmin();
 
-    if (firebaseAdmin) {
+    if (firebaseMessaging) {
       console.log(`[FCM] Sending live push notification to ${pushTokens.length} devices...`);
-      const response = await firebaseAdmin.messaging().sendEachForMulticast(payload);
+      const response = await firebaseMessaging.sendEachForMulticast(payload);
       console.log(`[FCM] Successfully sent ${response.successCount} messages; ${response.failureCount} failed.`);
     } else {
       console.log(`[PUSH NOTIFICATION SIMULATION] Firebase keys missing in .env.local! Simulating send to ${pushTokens.length} devices:`, payload.notification);
