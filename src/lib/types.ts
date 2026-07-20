@@ -145,3 +145,15 @@ export interface PresignResponse {
   storageKey: string;
   expiresAt: string;
 }
+
+// ---- Comments ----
+
+export interface Comment {
+  id: string;
+  memoryId: string;
+  userId: string;
+  user: UserSummary;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}

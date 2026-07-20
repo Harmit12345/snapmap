@@ -7,6 +7,7 @@ import type { Memory } from '@/lib/types';
 import MemoryCard from '@/components/MemoryCard';
 import CategoryFilterBar from '@/components/CategoryFilterBar';
 import MemoryComposer from '@/components/MemoryComposer';
+import MemoryDetailModal from '@/components/MemoryDetailModal';
 import LocationFollowButton from '@/components/LocationFollowButton';
 
 function formatDayHeader(dateStr: string): string {
@@ -30,6 +31,7 @@ function groupByDay(memories: Memory[]): Map<string, Memory[]> {
 function TimelinePageContent() {
   const searchParams = useSearchParams();
   const search = searchParams.get('search');
+  const sharedMemoryId = searchParams.get('memory');
 
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +46,8 @@ function TimelinePageContent() {
 
   const [error, setError] = useState<string | null>(null);
   const [searchFollowed, setSearchFollowed] = useState(false);
+  const [sharedMemory, setSharedMemory] = useState<Memory | null>(null);
+  const [loadingSharedMemory, setLoadingSharedMemory] = useState(false);
 
   const fetchTimeline = useCallback(async (reset = false) => {
     if (reset) {
@@ -106,6 +110,22 @@ function TimelinePageContent() {
       .then(data => setSearchFollowed(data.isSubscribed || false))
       .catch(() => setSearchFollowed(false));
   }, [search]);
+
+  // Fetch shared memory if present in URL
+  useEffect(() => {
+    if (sharedMemoryId && !sharedMemory && !loadingSharedMemory) {
+      setLoadingSharedMemory(true);
+      fetch(`/api/memories/${sharedMemoryId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.data) {
+            setSharedMemory(data.data);
+          }
+        })
+        .catch(err => console.error('Failed to load shared memory', err))
+        .finally(() => setLoadingSharedMemory(false));
+    }
+  }, [sharedMemoryId]);
 
   // Infinite scroll
   useEffect(() => {
@@ -309,6 +329,23 @@ function TimelinePageContent() {
         <MemoryComposer
           onClose={() => setShowComposer(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {sharedMemory && (
+        <MemoryDetailModal
+          memories={[sharedMemory]}
+          onClose={() => {
+            setSharedMemory(null);
+            // Optional: remove query param from URL without reload
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('memory');
+              window.history.pushState({}, '', url.toString());
+            }
+          }}
+          onUpdate={handleUpdate}
+          onDelete={handleDelete}
         />
       )}
     </div>
